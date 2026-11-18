@@ -40,6 +40,8 @@ class AnthropicAgent:
             messages.append({"role": "assistant", "content": response.content})
             tool_uses = [b for b in response.content if getattr(b, "type", None) == "tool_use"]
             if not tool_uses:
+                env.final_reply = "".join(
+                    getattr(b, "text", "") for b in response.content if getattr(b, "type", None) == "text")
                 return
             results = []
             for block in tool_uses:

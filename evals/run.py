@@ -73,7 +73,8 @@ def run_config(agent, config: dict, trials: int, task_filter: str | None, log) -
                 env.close()
             result: TrialResult = grade(env, error)
             log(f"  {task.id:<26} trial {trial + 1}: {'PASS' if result.passed else 'FAIL'}")
-            rows.append({**result.to_dict(), "trial": trial, "transcript": env.transcript()})
+            rows.append({**result.to_dict(), "trial": trial, "transcript": env.transcript(),
+                         "final_reply": env.final_reply})
     return rows
 
 

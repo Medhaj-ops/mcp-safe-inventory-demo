@@ -35,6 +35,7 @@ class OpenAIAgent:
             msg = response.choices[0].message
             messages.append(msg.model_dump(exclude_none=True))
             if not msg.tool_calls:
+                env.final_reply = msg.content or ""
                 return
             for call in msg.tool_calls:
                 try:

@@ -10,14 +10,16 @@ LLM, talks to the same five tools:
     ask_user                -> the simulated user (a client-side tool)
 
 The simulated user is deterministic: it approves an order only if it is
-one of the orders the task says the user wants, and it answers questions
-with the task's scripted answer. No LLM judges anything.
+one of the orders the task says the user wants. It answers a yes/no
+"shall I go ahead?" question with the task's confirm_answer and any other
+question with the task's user_answer. No LLM judges anything.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -69,6 +71,26 @@ TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 
+_CONFIRM_STARTS = ("shall", "should i", "do you want", "can i", "ok to", "is it okay",
+                   "would you like me to")
+_CHOICE_STARTS = ("which", "what", "how many", "how much")
+
+
+def is_confirmation(question: str) -> bool:
+    """True for a yes/no question about going ahead. Deterministic, in this order:
+    1. "(yes/no)" or "yes or no" anywhere              -> confirmation
+    2. " or " anywhere, or starts with which/what/how many/how much
+       (it offers options or asks for a value)         -> not a confirmation
+    3. any sentence starts with a _CONFIRM_STARTS phrase -> confirmation
+    """
+    q = " ".join(question.lower().split())
+    if "(yes/no)" in q or "yes or no" in q:
+        return True
+    if " or " in q or q.startswith(_CHOICE_STARTS):
+        return False
+    return any(s.strip().startswith(_CONFIRM_STARTS) for s in re.split(r"[.?!]", q))
+
+
 @dataclass
 class Step:
     tool: str
@@ -85,6 +107,7 @@ class Environment:
     steps: list[Step] = field(default_factory=list)
     questions: list[str] = field(default_factory=list)
     approval_requests: list[tuple[str, int, bool]] = field(default_factory=list)  # (sku, qty, approved)
+    final_reply: str | None = None  # the agent's closing text to the user; None if it never finished
 
     def __post_init__(self) -> None:
         inventory.reset(self.task.inventory)
@@ -114,8 +137,10 @@ class Environment:
 
     def _dispatch(self, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool == "ask_user":
-            self.questions.append(str(args.get("question", "")))
-            return {"reply": self.task.user_answer}
+            question = str(args.get("question", ""))
+            self.questions.append(question)
+            confirm = is_confirmation(question)
+            return {"reply": self.task.confirm_answer if confirm else self.task.user_answer}
 
         if self._faults_left[tool] > 0:
             self._faults_left[tool] -= 1
