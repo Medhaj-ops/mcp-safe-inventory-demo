@@ -15,14 +15,16 @@ class InventoryItem:
     name: str
     stock: int
     reorder_threshold: int
+    notes: str = ""
 
 
 # Seed data. Mutated only through apply_stock_change() below.
-_inventory: dict[str, InventoryItem] = {
-    "SKU-001": InventoryItem("SKU-001", "Widget A", stock=500, reorder_threshold=100),
-    "SKU-002": InventoryItem("SKU-002", "Widget B", stock=50, reorder_threshold=100),
-    "SKU-003": InventoryItem("SKU-003", "Gadget C", stock=200, reorder_threshold=50),
-}
+_SEED = [
+    InventoryItem("SKU-001", "Widget A", stock=500, reorder_threshold=100),
+    InventoryItem("SKU-002", "Widget B", stock=50, reorder_threshold=100),
+    InventoryItem("SKU-003", "Gadget C", stock=200, reorder_threshold=50),
+]
+_inventory: dict[str, InventoryItem] = {item.sku: item for item in _SEED}
 
 
 def get_item(sku: str) -> InventoryItem | None:
@@ -32,6 +34,12 @@ def get_item(sku: str) -> InventoryItem | None:
 
 def sku_exists(sku: str) -> bool:
     return sku in _inventory
+
+
+def search(query: str) -> list[InventoryItem]:
+    """Pure read. Case-insensitive match on SKU or name."""
+    q = query.strip().lower()
+    return [i for i in _inventory.values() if q in i.sku.lower() or q in i.name.lower()]
 
 
 def apply_stock_change(sku: str, delta: int) -> InventoryItem:
@@ -53,3 +61,10 @@ def apply_stock_change(sku: str, delta: int) -> InventoryItem:
 def snapshot() -> dict[str, dict]:
     """Read-only snapshot of the whole inventory, for audit/before-after logging."""
     return {sku: vars(item) for sku, item in _inventory.items()}
+
+
+def reset(items: list[InventoryItem] | None = None) -> None:
+    """Test/eval-only: replace the whole inventory (default: the seed data)."""
+    _inventory.clear()
+    for item in items if items is not None else _SEED:
+        _inventory[item.sku] = item

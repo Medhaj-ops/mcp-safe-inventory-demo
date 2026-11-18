@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from domain.purchase_orders import PurchaseOrderDraft
+from safety import config
 
 
 class GateError(Exception):
@@ -72,19 +73,26 @@ def require_draft_for_submit(session_id: str, draft_id: str) -> PurchaseOrderDra
         session = _sessions.get(session_id)
 
         if session is None or draft_id not in session.pending_drafts:
-            raise GateError(
-                "GATE_BLOCKED: Cannot call submit_purchase_order. "
-                f"No draft '{draft_id}' found in this session. "
-                "You must call draft_purchase_order first."
-            )
+            raise GateError(config.error(
+                "GATE_BLOCKED",
+                f"Cannot call submit_purchase_order. No draft '{draft_id}' found in "
+                "this session. You must call draft_purchase_order first.",
+            ))
 
         if draft_id in session.submitted_draft_ids:
-            raise GateError(
-                "GATE_BLOCKED: This draft has already been submitted. "
-                "Call draft_purchase_order again to create a new draft."
-            )
+            raise GateError(config.error(
+                "GATE_BLOCKED",
+                "This draft has already been submitted. "
+                "Call draft_purchase_order again to create a new draft.",
+            ))
 
         return session.pending_drafts[draft_id]
+
+
+def reset() -> None:
+    """Test/eval-only: forget every session."""
+    with _lock:
+        _sessions.clear()
 
 
 def mark_submitted(session_id: str, draft_id: str) -> None:

@@ -6,6 +6,7 @@ events most worth reviewing later.
 
 from safety import audit
 import server
+from tests.conftest import submit
 
 
 def setup_function():
@@ -31,8 +32,7 @@ def test_validation_failure_is_logged_with_error():
 
 
 def test_gate_block_is_logged():
-    server.submit_purchase_order(
-        draft_po_id="draft-nonexistent", approved=True, session_id="audit-test-3"
+    submit(draft_po_id="draft-nonexistent", session_id="audit-test-3"
     )
     entries = audit.entries_for_session("audit-test-3")
     assert len(entries) == 1
@@ -43,8 +43,7 @@ def test_successful_submit_logs_before_and_after_state():
     draft = server.draft_purchase_order(
         sku="SKU-002", quantity=30, justification="test", session_id="audit-test-4"
     )
-    server.submit_purchase_order(
-        draft_po_id=draft["draft_po_id"], approved=True, session_id="audit-test-4"
+    submit(draft_po_id=draft["draft_po_id"], session_id="audit-test-4"
     )
 
     entries = audit.entries_for_session("audit-test-4")
@@ -62,7 +61,7 @@ def test_full_flow_produces_complete_audit_trail():
     draft = server.draft_purchase_order(
         sku="SKU-001", quantity=20, justification="restock", session_id=session
     )
-    server.submit_purchase_order(draft_po_id=draft["draft_po_id"], approved=True, session_id=session)
+    submit(draft_po_id=draft["draft_po_id"], session_id=session)
 
     entries = audit.entries_for_session(session)
     tool_names = [e.tool_name for e in entries]

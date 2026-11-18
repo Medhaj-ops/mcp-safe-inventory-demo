@@ -1,24 +1,24 @@
 """
-MCP server: three tools over a toy inventory system, demonstrating
-phase-gating, validation-before-mutation, and structured audit logging.
+MCP server: four tools over a toy inventory system, demonstrating
+phase-gating, validation-before-mutation, human approval and structured
+audit logging.
 
 This file is deliberately thin. Every tool follows the same shape:
   1. look up / touch state
-  2. delegate to safety/ for gates and validation
+  2. delegate to safety/ for gates, validation and approval
   3. delegate to domain/ for the actual business logic
   4. record an audit entry
   5. return a structured result
 
-The MCP server framework itself (mcp.server.fastmcp) is a thin wrapper;
-swap it for a different transport and none of the logic in safety/ or
-domain/ has to change. That decoupling is intentional and is the same
-shape used in the production servers this demo is modeled after.
+Swap the transport and none of the logic in safety/ or domain/ has to
+change. That decoupling is the same shape used in the production servers
+this demo is modeled after.
 """
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 
 from domain import inventory, purchase_orders
-from safety import audit, phases, validation
+from safety import approvals, audit, config, phases, validation
 from safety.phases import GateError
 
 mcp = MCPServer("safe-inventory-demo")
@@ -28,7 +28,7 @@ mcp = MCPServer("safe-inventory-demo")
 def read_inventory_state(sku: str, session_id: str = "default") -> dict:
     """Read-only. No gate, no side effects on state. Always safe to call."""
     item = inventory.get_item(sku)
-    result = vars(item) if item else {"error": f"SKU '{sku}' not found"}
+    result = vars(item) if item else {"error": config.error("NOT_FOUND", f"SKU '{sku}' not found. Try search_inventory.")}
 
     audit.record(
         session_id=session_id,
@@ -40,14 +40,28 @@ def read_inventory_state(sku: str, session_id: str = "default") -> dict:
 
 
 @mcp.tool()
+def search_inventory(query: str, session_id: str = "default") -> dict:
+    """Read-only. Find items by SKU or name, e.g. 'widget'."""
+    matches = [vars(i) for i in inventory.search(query)]
+    audit.record(
+        session_id=session_id,
+        tool_name="search_inventory",
+        parameters={"query": query},
+        outcome="success",
+    )
+    return {"matches": matches}
+
+
+@mcp.tool()
 def draft_purchase_order(
     sku: str, quantity: int, justification: str, session_id: str = "default"
 ) -> dict:
     """
     Dry-run: validates and computes a projected state WITHOUT mutating
-    inventory. This is the only path that produces a draft_id, which
+    inventory. This is the only path that produces a draft_po_id, which
     submit_purchase_order requires as proof a draft happened first.
     """
+    params = {"sku": sku, "quantity": quantity, "justification": justification}
     results = validation.run_all_validations(sku, quantity, justification)
 
     if not validation.all_ok(results):
@@ -55,10 +69,12 @@ def draft_purchase_order(
         audit.record(
             session_id=session_id,
             tool_name="draft_purchase_order",
-            parameters={"sku": sku, "quantity": quantity, "justification": justification},
+            parameters=params,
             outcome="validation_failed",
             error="; ".join(errors),
         )
+        if not config.ACTIONABLE_ERRORS:
+            return {"draft_po_id": None, "error": "VALIDATION_FAILED"}
         return {"draft_po_id": None, "validation_results": [vars(r) for r in results]}
 
     draft = purchase_orders.create_draft(sku, quantity, justification)
@@ -67,7 +83,7 @@ def draft_purchase_order(
     audit.record(
         session_id=session_id,
         tool_name="draft_purchase_order",
-        parameters={"sku": sku, "quantity": quantity, "justification": justification},
+        parameters=params,
         outcome="success",
     )
 
@@ -82,40 +98,36 @@ def draft_purchase_order(
 
 
 @mcp.tool()
-def submit_purchase_order(
-    draft_po_id: str, approved: bool = False, session_id: str = "default"
+async def submit_purchase_order(
+    draft_po_id: str, session_id: str = "default", ctx: Context | None = None
 ) -> dict:
     """
-    The only tool that mutates inventory. Hard-gated: requires a matching
-    draft from draft_purchase_order in this same session, and requires
-    explicit approved=true. Both checks fail closed by default.
+    The only tool that mutates inventory. Needs a matching draft from
+    draft_purchase_order in this session, and then asks the human to
+    approve it. There is no parameter the agent can set to approve on
+    the user's behalf.
     """
-    if not approved:
-        error_msg = (
-            "GATE_BLOCKED: submit_purchase_order requires approved=true. "
-            "This is a deliberate safety check, not an oversight — "
-            "call again with approved=true once the draft has been reviewed."
-        )
-        audit.record(
-            session_id=session_id,
-            tool_name="submit_purchase_order",
-            parameters={"draft_po_id": draft_po_id, "approved": approved},
-            outcome="gate_blocked",
-            error=error_msg,
-        )
-        return {"error": error_msg}
+    params = {"draft_po_id": draft_po_id}
 
     try:
         draft = phases.require_draft_for_submit(session_id, draft_po_id)
     except GateError as e:
-        audit.record(
-            session_id=session_id,
-            tool_name="submit_purchase_order",
-            parameters={"draft_po_id": draft_po_id, "approved": approved},
-            outcome="gate_blocked",
-            error=str(e),
-        )
+        audit.record(session_id=session_id, tool_name="submit_purchase_order",
+                     parameters=params, outcome="gate_blocked", error=str(e))
         return {"error": str(e)}
+
+    if config.REQUIRE_HUMAN_APPROVAL:
+        approved, channel = await approvals.request(draft, ctx)
+        if not approved:
+            error_msg = config.error(
+                "APPROVAL_DENIED",
+                f"The user did not approve this order (via {channel}). Nothing was "
+                "changed. Do not resubmit the same draft; ask the user what they "
+                "want instead.",
+            )
+            audit.record(session_id=session_id, tool_name="submit_purchase_order",
+                         parameters=params, outcome="approval_denied", error=error_msg)
+            return {"error": error_msg}
 
     po = purchase_orders.commit_draft(draft)
     phases.mark_submitted(session_id, draft_po_id)
@@ -123,7 +135,7 @@ def submit_purchase_order(
     audit.record(
         session_id=session_id,
         tool_name="submit_purchase_order",
-        parameters={"draft_po_id": draft_po_id, "approved": approved},
+        parameters=params,
         outcome="success",
         before_state=po.before_state,
         after_state=po.after_state,

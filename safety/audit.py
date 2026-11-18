@@ -31,6 +31,9 @@ class AuditEntry:
     error: str | None = None
 
 
+# Evals set this False to keep their output readable; the in-memory log is unaffected.
+ECHO = True
+
 _log: list[AuditEntry] = []
 _lock = threading.RLock()
 
@@ -56,7 +59,8 @@ def record(
     )
     with _lock:
         _log.append(entry)
-    print(json.dumps(asdict(entry)), flush=True)
+    if ECHO:
+        print(json.dumps(asdict(entry)), flush=True)
     return entry
 
 

@@ -5,7 +5,7 @@ This is real output from running the server's tool functions directly
 
 ```python
 >>> read_inventory_state(sku="SKU-002", session_id="demo")
-{'sku': 'SKU-002', 'name': 'Widget B', 'stock': 50, 'reorder_threshold': 100}
+{'sku': 'SKU-002', 'name': 'Widget B', 'stock': 50, 'reorder_threshold': 100, 'notes': ''}
 ```
 
 Stock is below the reorder threshold (50 < 100). Draft a purchase order:
@@ -33,20 +33,19 @@ Stock is below the reorder threshold (50 < 100). Draft a purchase order:
 ```
 
 Note: inventory has NOT changed yet. This is a projection, not a mutation.
-Now submit it, with explicit approval:
+Now submit it. The server asks the human to approve (here, they say yes):
 
 ```python
 >>> submit_purchase_order(
 ...     draft_po_id="draft-3e2cd2d6",
-...     approved=True,
 ...     session_id="demo",
 ... )
 {
     'po_id': 'po-518a8836',
     'sku': 'SKU-002',
     'quantity': 200,
-    'before_state': {'sku': 'SKU-002', 'name': 'Widget B', 'stock': 50, 'reorder_threshold': 100},
-    'after_state': {'sku': 'SKU-002', 'name': 'Widget B', 'stock': 250, 'reorder_threshold': 100},
+    'before_state': {'sku': 'SKU-002', 'name': 'Widget B', 'stock': 50, 'reorder_threshold': 100, 'notes': ''},
+    'after_state': {'sku': 'SKU-002', 'name': 'Widget B', 'stock': 250, 'reorder_threshold': 100, 'notes': ''},
 }
 ```
 
@@ -57,5 +56,5 @@ for the mutation:
 ```json
 {"timestamp": "...", "session_id": "demo", "tool_name": "read_inventory_state", "parameters": {"sku": "SKU-002"}, "outcome": "success", ...}
 {"timestamp": "...", "session_id": "demo", "tool_name": "draft_purchase_order", "parameters": {"sku": "SKU-002", "quantity": 200, ...}, "outcome": "success", ...}
-{"timestamp": "...", "session_id": "demo", "tool_name": "submit_purchase_order", "parameters": {"draft_po_id": "draft-3e2cd2d6", "approved": true}, "outcome": "success", "before_state": {...}, "after_state": {...}}
+{"timestamp": "...", "session_id": "demo", "tool_name": "submit_purchase_order", "parameters": {"draft_po_id": "draft-3e2cd2d6"}, "outcome": "success", "before_state": {...}, "after_state": {...}}
 ```

@@ -8,7 +8,7 @@ mode in isolation.
 An agent (or a bug, or a prompt injection) tries to submit directly:
 
 ```python
->>> submit_purchase_order(draft_po_id="draft-fake", approved=True, session_id="s2")
+>>> submit_purchase_order(draft_po_id="draft-fake", session_id="s2")
 {'error': "GATE_BLOCKED: Cannot call submit_purchase_order. No draft 'draft-fake' found in this session. You must call draft_purchase_order first."}
 ```
 
@@ -16,18 +16,30 @@ Inventory is untouched. The error message tells the caller exactly what
 to do next — this matters when the caller is an LLM agent trying to
 self-correct, not just a human reading logs.
 
-## Scenario B — submitting without explicit approval
+## Scenario B — the human says no
 
-`approved` defaults to `False`. A draft existing is not, by itself,
-enough to commit it:
+The agent cannot approve an order itself: `submit_purchase_order` has no
+`approved` parameter. The server asks the human (MCP elicitation in a
+real client), and shows them a summary it rendered from the draft, not
+the agent's own description:
+
+```text
+Approve purchase order draft-43c04554?
+  SKU:        SKU-001
+  Quantity:   50
+  Stock:      500 -> 550
+  Reason:     test
+```
 
 ```python
->>> draft_purchase_order(sku="SKU-001", quantity=50, justification="test", session_id="s3")
-{'draft_po_id': 'draft-a1b2c3d4', ...}
+>>> submit_purchase_order(draft_po_id="draft-43c04554", session_id="s3")   # human declined
+{'error': 'APPROVAL_DENIED: The user did not approve this order (via provider). Nothing was changed. Do not resubmit the same draft; ask the user what they want instead.'}
 
->>> submit_purchase_order(draft_po_id="draft-a1b2c3d4", session_id="s3")
-{'error': 'GATE_BLOCKED: submit_purchase_order requires approved=true. This is a deliberate safety check, not an oversight — call again with approved=true once the draft has been reviewed.'}
+>>> submit_purchase_order(draft_po_id="draft-43c04554", session_id="s3")   # no approval channel at all
+{'error': 'APPROVAL_DENIED: The user did not approve this order (via no_channel). Nothing was changed. Do not resubmit the same draft; ask the user what they want instead.'}
 ```
+
+With no way to reach a human, the answer is no. Fail closed.
 
 ## Scenario C — invalid draft (multiple simultaneous problems)
 
@@ -55,7 +67,7 @@ session, even with the correct draft_id:
 
 ```python
 >>> draft = draft_purchase_order(sku="SKU-001", quantity=10, justification="test", session_id="owner")
->>> submit_purchase_order(draft_po_id=draft["draft_po_id"], approved=True, session_id="intruder")
+>>> submit_purchase_order(draft_po_id=draft["draft_po_id"], session_id="intruder")
 {'error': "GATE_BLOCKED: Cannot call submit_purchase_order. No draft '...' found in this session. You must call draft_purchase_order first."}
 ```
 
@@ -64,10 +76,10 @@ session, even with the correct draft_id:
 A draft can only be submitted once:
 
 ```python
->>> submit_purchase_order(draft_po_id="draft-a1b2c3d4", approved=True, session_id="s3")
+>>> submit_purchase_order(draft_po_id="draft-a1b2c3d4", session_id="s3")
 {'po_id': 'po-...', ...}  # succeeds
 
->>> submit_purchase_order(draft_po_id="draft-a1b2c3d4", approved=True, session_id="s3")
+>>> submit_purchase_order(draft_po_id="draft-a1b2c3d4", session_id="s3")
 {'error': 'GATE_BLOCKED: This draft has already been submitted. Call draft_purchase_order again to create a new draft.'}
 ```
 
